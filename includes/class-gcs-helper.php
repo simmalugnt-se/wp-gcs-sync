@@ -15,6 +15,7 @@ class GCS_Helper
     private static $storage_client = null;
     private static $image_quality = 85;
     private static $max_width = 1982;
+    private static $auto_delete_local = false;
 
     public static function init()
     {
@@ -36,6 +37,7 @@ class GCS_Helper
         self::$service_account_json = isset($options['service_account_json']) ? $options['service_account_json'] : '';
         self::$image_quality = isset($options['image_quality']) ? intval($options['image_quality']) : 85;
         self::$max_width = isset($options['max_width']) ? intval($options['max_width']) : 1982;
+        self::$auto_delete_local = isset($options['auto_delete_local']) ? !empty($options['auto_delete_local']) : false;
 
         if (empty(self::$bucket_name)) {
             error_log('GCS Media Sync: Bucket name is not configured.');
@@ -96,7 +98,30 @@ class GCS_Helper
             $path_parts = pathinfo($url);
             $filename = $path_parts['basename'];
             $original_filename = basename(get_attached_file($attachment_id));
+
             if ($filename !== $original_filename) {
+                // This is likely a resized image, check if we have a specific GCS URL for it
+                $gcs_urls = get_post_meta($attachment_id, 'gcs_urls', true);
+                if (!empty($gcs_urls) && is_array($gcs_urls)) {
+                    // Look for the size in gcs_urls array
+                    foreach ($gcs_urls as $size => $size_url) {
+                        if ($size !== 'full' && strpos($filename, $size) !== false) {
+                            return $size_url;
+                        }
+                    }
+
+                    // If no specific size found, try to match by filename
+                    $metadata = wp_get_attachment_metadata($attachment_id);
+                    if (isset($metadata['sizes']) && is_array($metadata['sizes'])) {
+                        foreach ($metadata['sizes'] as $size => $size_info) {
+                            if ($size_info['file'] === $filename && isset($gcs_urls[$size])) {
+                                return $gcs_urls[$size];
+                            }
+                        }
+                    }
+                }
+
+                // Fallback to string replacement if no specific URL found
                 return str_replace($wp_base_url, $gcs_url, $url);
             }
             return $gcs_url;
@@ -234,7 +259,66 @@ class GCS_Helper
         update_post_meta($attachment_id, 'gcs_urls', $gcs_urls);
         update_post_meta($attachment_id, 'gcs_synced', true);
 
+        // Delete local files if auto-delete is enabled and upload was successful
+        if (self::$auto_delete_local) {
+            self::delete_local_files_after_sync($attachment_id, $file_path, $metadata);
+        }
+
         self::close_storage_client();
+    }
+
+    /**
+     * Delete local files after successful sync to GCS
+     * Includes safety checks to verify files exist in GCS before deletion
+     */
+    private static function delete_local_files_after_sync($attachment_id, $file_path, $metadata)
+    {
+        try {
+            $upload_dir = wp_upload_dir();
+            $base_dir = trailingslashit($upload_dir['basedir']);
+            $rel_path = str_replace($base_dir, '', $file_path);
+            $file_dir = dirname($file_path);
+            $rel_dir = dirname($rel_path);
+
+            $storage = self::get_storage_client();
+            $bucket = $storage->bucket(self::$bucket_name);
+
+            // Verify original file exists in GCS before deleting locally
+            $gcs_path = self::get_gcs_path($rel_path);
+            $object = $bucket->object($gcs_path);
+
+            if ($object->exists() && file_exists($file_path)) {
+                if (unlink($file_path)) {
+                    error_log("GCS Media Sync: Deleted local file after sync: {$file_path}");
+                } else {
+                    error_log("GCS Media Sync: Failed to delete local file: {$file_path}");
+                }
+            } else {
+                error_log("GCS Media Sync: Skipping local file deletion - file not confirmed in GCS: {$gcs_path}");
+            }
+
+            // Delete size files if they exist in GCS
+            if (isset($metadata['sizes']) && is_array($metadata['sizes'])) {
+                foreach ($metadata['sizes'] as $size => $size_info) {
+                    $size_file_path = $file_dir . '/' . $size_info['file'];
+                    $size_rel_path = $rel_dir . '/' . $size_info['file'];
+                    $size_gcs_path = self::get_gcs_path($size_rel_path);
+                    $size_object = $bucket->object($size_gcs_path);
+
+                    if ($size_object->exists() && file_exists($size_file_path)) {
+                        if (unlink($size_file_path)) {
+                            error_log("GCS Media Sync: Deleted local size file after sync: {$size_file_path}");
+                        } else {
+                            error_log("GCS Media Sync: Failed to delete local size file: {$size_file_path}");
+                        }
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            error_log('GCS Media Sync: Error during local file deletion: ' . $e->getMessage());
+        } finally {
+            self::close_storage_client();
+        }
     }
 
     public static function prevent_local_file_deletion($file_path)
@@ -242,6 +326,13 @@ class GCS_Helper
         if (!self::$is_enabled) {
             return $file_path;
         }
+
+        // If auto-delete is enabled, allow WordPress to delete files normally
+        // since we handle deletion ourselves after upload
+        if (self::$auto_delete_local) {
+            return $file_path;
+        }
+
         // Keep the file locally by returning null (so WP doesn't delete it)
         return null;
     }
@@ -297,4 +388,3 @@ class GCS_Helper
         }
     }
 }
-

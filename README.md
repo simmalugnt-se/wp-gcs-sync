@@ -25,6 +25,7 @@ A WordPress plugin that automatically syncs media uploads to Google Cloud Storag
 ### 1. Install the Plugin
 
 Copy this plugin folder to your WordPress plugins directory:
+
 ```bash
 wp-content/plugins/gcs-media-sync/
 ```
@@ -34,6 +35,7 @@ wp-content/plugins/gcs-media-sync/
 You need to install the Google Cloud Storage PHP library. This can be done in several ways:
 
 **Option A: Via Composer (Recommended)**
+
 ```bash
 cd /path/to/your/wordpress
 composer require google/cloud-storage
@@ -41,11 +43,12 @@ composer require google/cloud-storage
 
 **Option B: Via WordPress Composer**
 If you're using a WordPress installation managed by Composer, add it to your `composer.json`:
+
 ```json
 {
-    "require": {
-        "google/cloud-storage": "^1.30"
-    }
+  "require": {
+    "google/cloud-storage": "^1.30"
+  }
 }
 ```
 
@@ -72,10 +75,12 @@ Go to WordPress Admin → Settings → GCS Media Sync and configure:
 - **Service Account JSON**: Paste the entire JSON content from your service account key file
 - **Max Image Width**: Maximum width for uploaded images (default: 1982px)
 - **Image Quality**: JPEG quality setting (default: 85%)
+- **Auto-Delete Local Files**: Delete files from server after successful sync to save disk space (⚠️ **Warning**: Files will be permanently removed from your server)
 
 ### 3. Verify Configuration
 
 Go to WordPress Admin → Tools → GCS Check to verify that:
+
 - The Google Cloud Storage library is installed
 - Your configuration is correct
 - The plugin is enabled
@@ -99,11 +104,30 @@ Go to WordPress Admin → Tools → GCS Check to verify that:
   - Image src attributes
   - Responsive image srcset attributes
 
-### Deletion
+### Local File Management
+
+The plugin provides two modes for managing local files after sync:
+
+**Default Mode (Auto-Delete Disabled)**:
+
+- Files remain on your server after being synced to GCS
+- Provides backup redundancy and compatibility with plugins that expect local files
+- URLs are rewritten to serve from GCS while keeping local copies
+
+**Auto-Delete Mode (Auto-Delete Enabled)**:
+
+- ⚠️ **Warning**: Files are permanently deleted from your server after successful sync
+- Significantly reduces disk space usage
+- Files are only deleted after verifying they exist in GCS
+- Includes safety checks before deletion
+- Both original files and all generated sizes are removed
+
+### Deletion from WordPress
 
 - When you delete an attachment from WordPress Media Library
 - The plugin automatically deletes the corresponding files from GCS
 - This includes the original file and all generated sizes
+- Local files are handled according to your Auto-Delete setting
 
 ## WP-CLI Commands
 
@@ -140,6 +164,7 @@ wp gcs sync-one 123 --force
 ```
 
 These commands are perfect for:
+
 - **Initial migration**: Sync existing media when installing the plugin on an existing site
 - **Selective sync**: Sync specific files that may have failed during automatic upload
 - **Re-sync**: Update files that have changed or need to be re-optimized
@@ -184,6 +209,7 @@ Image Quality: 90
 ### Library Not Found Error
 
 If you see "Google Cloud Storage PHP library is required", install it via Composer:
+
 ```bash
 composer require google/cloud-storage
 ```
@@ -191,6 +217,7 @@ composer require google/cloud-storage
 ### Permission Errors
 
 Ensure your service account has the following permissions:
+
 - Storage Object Admin (for the specific bucket)
 - Or Storage Admin (for broader access)
 

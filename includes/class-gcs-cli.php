@@ -123,7 +123,7 @@ class GCS_CLI
 
         foreach ($attachment_ids as $index => $attachment_id) {
             $result = self::sync_attachment_to_gcs($attachment_id, $force);
-            
+
             switch ($result['status']) {
                 case 'success':
                     $success_count++;
@@ -297,7 +297,7 @@ class GCS_CLI
             // Optimize image if needed
             $image_quality = isset($options['image_quality']) ? intval($options['image_quality']) : 85;
             $max_width = isset($options['max_width']) ? intval($options['max_width']) : 1982;
-            
+
             $image_size = @getimagesize($file_path);
             if ($image_size) {
                 $image = wp_get_image_editor($file_path);
@@ -361,6 +361,11 @@ class GCS_CLI
             update_post_meta($attachment_id, 'gcs_urls', $gcs_urls);
             update_post_meta($attachment_id, 'gcs_synced', true);
 
+            // Delete local files if auto-delete is enabled
+            if (!empty($options['auto_delete_local'])) {
+                self::delete_local_files_after_cli_sync($attachment_id, $file_path, $metadata, $bucket, $folder);
+            }
+
             // Clean up temp file
             if (isset($temp_file) && file_exists($temp_file)) {
                 unlink($temp_file);
@@ -370,12 +375,60 @@ class GCS_CLI
                 'status' => 'success',
                 'message' => 'Synced successfully'
             );
-
         } catch (Exception $e) {
             return array(
                 'status' => 'error',
                 'message' => $e->getMessage()
             );
+        }
+    }
+
+    /**
+     * Delete local files after successful CLI sync to GCS
+     * Includes safety checks to verify files exist in GCS before deletion
+     */
+    private static function delete_local_files_after_cli_sync($attachment_id, $file_path, $metadata, $bucket, $folder)
+    {
+        try {
+            $upload_dir = wp_upload_dir();
+            $base_dir = trailingslashit($upload_dir['basedir']);
+            $rel_path = str_replace($base_dir, '', $file_path);
+            $file_dir = dirname($file_path);
+            $rel_dir = dirname($rel_path);
+
+            // Verify original file exists in GCS before deleting locally
+            $gcs_path = $folder . ltrim($rel_path, '/');
+            $object = $bucket->object($gcs_path);
+
+            if ($object->exists() && file_exists($file_path)) {
+                if (unlink($file_path)) {
+                    WP_CLI::log("Deleted local file after sync: {$file_path}");
+                } else {
+                    WP_CLI::warning("Failed to delete local file: {$file_path}");
+                }
+            } else {
+                WP_CLI::warning("Skipping local file deletion - file not confirmed in GCS: {$gcs_path}");
+            }
+
+            // Delete size files if they exist in GCS
+            if (isset($metadata['sizes']) && is_array($metadata['sizes'])) {
+                foreach ($metadata['sizes'] as $size => $size_info) {
+                    $size_file_path = $file_dir . '/' . $size_info['file'];
+                    $size_rel_path = $rel_dir . '/' . $size_info['file'];
+                    $size_gcs_path = $folder . ltrim($size_rel_path, '/');
+                    $size_object = $bucket->object($size_gcs_path);
+
+                    if ($size_object->exists() && file_exists($size_file_path)) {
+                        if (unlink($size_file_path)) {
+                            WP_CLI::log("Deleted local size file after sync: {$size_file_path}");
+                        } else {
+                            WP_CLI::warning("Failed to delete local size file: {$size_file_path}");
+                        }
+                    }
+                }
+            }
+        } catch (Exception $e) {
+            WP_CLI::warning('Error during local file deletion: ' . $e->getMessage());
         }
     }
 }

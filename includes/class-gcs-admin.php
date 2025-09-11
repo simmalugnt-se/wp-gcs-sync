@@ -13,7 +13,7 @@ class GCS_Admin
             return;
         }
         $options = get_option('gcs_sync_options', array());
-        ?>
+?>
         <div class="wrap">
             <h1><?php echo esc_html__('GCS Media Sync Settings', 'gcs-sync'); ?></h1>
             <form method="post" action="options.php">
@@ -60,11 +60,21 @@ class GCS_Admin
                             <input type="number" min="10" max="100" name="gcs_sync_options[image_quality]" value="<?php echo esc_attr($options['image_quality'] ?? 85); ?>" />
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row"><?php esc_html_e('Auto-Delete Local Files', 'gcs-sync'); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="gcs_sync_options[auto_delete_local]" value="1" <?php checked(!empty($options['auto_delete_local'])); ?> />
+                                <?php esc_html_e('Delete files from server after successful sync to GCS (saves disk space)', 'gcs-sync'); ?>
+                            </label>
+                            <p class="description"><?php esc_html_e('Warning: Files will be permanently removed from your server. Make sure your GCS bucket is properly configured and accessible.', 'gcs-sync'); ?></p>
+                        </td>
+                    </tr>
                 </table>
                 <?php submit_button(); ?>
             </form>
         </div>
-        <?php
+    <?php
     }
 
     public static function sanitize_settings($input)
@@ -76,6 +86,7 @@ class GCS_Admin
         $output['service_account_json'] = isset($input['service_account_json']) ? wp_kses_post($input['service_account_json']) : '';
         $output['max_width'] = isset($input['max_width']) ? max(320, min(4000, intval($input['max_width']))) : 1982;
         $output['image_quality'] = isset($input['image_quality']) ? max(10, min(100, intval($input['image_quality']))) : 85;
+        $output['auto_delete_local'] = !empty($input['auto_delete_local']) ? 1 : 0;
         return $output;
     }
 
@@ -89,7 +100,7 @@ class GCS_Admin
         $library = class_exists('Google\\Cloud\\Storage\\StorageClient');
         $autoloader_path = GCS_SYNC_PLUGIN_DIR . 'vendor/autoload.php';
         $autoloader_exists = file_exists($autoloader_path);
-        ?>
+    ?>
         <div class="wrap">
             <h1><?php esc_html_e('GCS Media Sync Check', 'gcs-sync'); ?></h1>
             <pre>
@@ -103,6 +114,7 @@ Bucket:     <?php echo !empty($options['bucket_name']) ? '✅ ' . esc_html($opti
 Folder:     <?php echo esc_html($options['bucket_folder'] ?? '(root)'); ?>
 Max width:  <?php echo esc_html($options['max_width'] ?? '1982'); ?>px
 Quality:    <?php echo esc_html($options['image_quality'] ?? '85'); ?>%
+Auto-delete: <?php echo !empty($options['auto_delete_local']) ? '⚠️  enabled (files will be deleted from server)' : '✅ disabled (files kept on server)'; ?>
 Service Account: <?php echo !empty($options['service_account_json']) ? '✅ configured' : '❌ not configured'; ?>
 
 <strong>=== TROUBLESHOOTING ===</strong>
@@ -119,7 +131,6 @@ Service Account: <?php echo !empty($options['service_account_json']) ? '✅ conf
 Plugin path: <?php echo esc_html(GCS_SYNC_PLUGIN_DIR); ?>
             </pre>
         </div>
-        <?php
+<?php
     }
 }
-
