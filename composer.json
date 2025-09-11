@@ -1,0 +1,19 @@
+{
+    "name": "gcs-media-sync/wordpress-plugin",
+    "description": "WordPress plugin for syncing media uploads to Google Cloud Storage",
+    "type": "wordpress-plugin",
+    "require": {
+        "php": ">=7.4",
+        "google/cloud-storage": "^1.48"
+    },
+    "autoload": {
+        "classmap": ["includes/"]
+    },
+    "license": "GPL-2.0-or-later",
+    "authors": [
+        {
+            "name": "Your Name",
+            "email": "your.email@example.com"
+        }
+    ]
+}
