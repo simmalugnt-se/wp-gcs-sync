@@ -44,6 +44,12 @@ class GCS_CLI
      * default: false
      * ---
      *
+     * [--timeout=<seconds>]
+     * : Maximum time in seconds to spend processing each file before skipping to the next.
+     * ---
+     * default: 300
+     * ---
+     *
      * ## EXAMPLES
      *
      *     # Sync all unsynced media files to GCS
@@ -54,6 +60,9 @@ class GCS_CLI
      *
      *     # Force re-sync all media files
      *     $ wp gcs sync --force
+     *
+     *     # Sync with 60-second timeout per file
+     *     $ wp gcs sync --timeout=60
      *
      * @param array $args Command arguments
      * @param array $assoc_args Command options
@@ -81,6 +90,7 @@ class GCS_CLI
         $limit = isset($assoc_args['limit']) ? (int) $assoc_args['limit'] : -1;
         $offset = isset($assoc_args['offset']) ? (int) $assoc_args['offset'] : 0;
         $force = isset($assoc_args['force']) && $assoc_args['force'];
+        $timeout = isset($assoc_args['timeout']) ? (int) $assoc_args['timeout'] : 300;
 
         // Get attachments to sync
         $query_args = array(
@@ -125,9 +135,9 @@ class GCS_CLI
             // Debug: Show which file we're about to process
             $file_path = get_attached_file($attachment_id);
             $filename = $file_path ? basename($file_path) : 'unknown';
-            WP_CLI::log(sprintf('Processing attachment %d: %s', $attachment_id, $filename));
+            WP_CLI::log(sprintf('Processing attachment %d: %s (timeout: %ds)', $attachment_id, $filename, $timeout));
 
-            $result = self::sync_attachment_to_gcs($attachment_id, $force);
+            $result = self::sync_attachment_to_gcs($attachment_id, $force, $timeout);
 
             switch ($result['status']) {
                 case 'success':
@@ -135,7 +145,11 @@ class GCS_CLI
                     break;
                 case 'error':
                     $error_count++;
-                    WP_CLI::warning(sprintf('Attachment %d: %s', $attachment_id, $result['message']));
+                    if (strpos($result['message'], 'Timeout') !== false) {
+                        WP_CLI::warning(sprintf('Attachment %d timed out: %s', $attachment_id, $result['message']));
+                    } else {
+                        WP_CLI::warning(sprintf('Attachment %d: %s', $attachment_id, $result['message']));
+                    }
                     break;
                 case 'skipped':
                     $skipped_count++;
@@ -183,6 +197,12 @@ class GCS_CLI
      * default: false
      * ---
      *
+     * [--timeout=<seconds>]
+     * : Maximum time in seconds to spend processing the file before timing out.
+     * ---
+     * default: 300
+     * ---
+     *
      * ## EXAMPLES
      *
      *     # Sync attachment with ID 123
@@ -190,6 +210,9 @@ class GCS_CLI
      *
      *     # Force re-sync attachment with ID 123
      *     $ wp gcs sync-one 123 --force
+     *
+     *     # Sync with 60-second timeout
+     *     $ wp gcs sync-one 123 --timeout=60
      *
      * @param array $args Command arguments
      * @param array $assoc_args Command options
@@ -203,6 +226,7 @@ class GCS_CLI
 
         $attachment_id = (int) $args[0];
         $force = isset($assoc_args['force']) && $assoc_args['force'];
+        $timeout = isset($assoc_args['timeout']) ? (int) $assoc_args['timeout'] : 300;
 
         // Check if plugin is enabled and configured
         $options = get_option('gcs_sync_options', array());
@@ -228,9 +252,9 @@ class GCS_CLI
             return;
         }
 
-        WP_CLI::log(sprintf('Syncing attachment %d: %s', $attachment_id, $post->post_title));
+        WP_CLI::log(sprintf('Syncing attachment %d: %s (timeout: %ds)', $attachment_id, $post->post_title, $timeout));
 
-        $result = self::sync_attachment_to_gcs($attachment_id, $force);
+        $result = self::sync_attachment_to_gcs($attachment_id, $force, $timeout);
 
         switch ($result['status']) {
             case 'success':
@@ -250,12 +274,25 @@ class GCS_CLI
      *
      * @param int $attachment_id Attachment ID
      * @param bool $force Force upload even if already synced
+     * @param int $timeout Maximum time in seconds to spend processing this file
      * @return array Result array with status and message
      */
-    private static function sync_attachment_to_gcs($attachment_id, $force = false)
+    private static function sync_attachment_to_gcs($attachment_id, $force = false, $timeout = 300)
     {
         // Debug: Starting sync process
-        WP_CLI::debug(sprintf('Starting sync for attachment %d (force: %s)', $attachment_id, $force ? 'yes' : 'no'));
+        WP_CLI::debug(sprintf('Starting sync for attachment %d (force: %s, timeout: %ds)', $attachment_id, $force ? 'yes' : 'no', $timeout));
+
+        // Set start time for timeout tracking
+        $start_time = time();
+
+        // Set a timeout function to handle long-running operations
+        $check_timeout = function () use ($start_time, $timeout, $attachment_id) {
+            if (time() - $start_time > $timeout) {
+                WP_CLI::warning(sprintf('Timeout (%ds) reached for attachment %d, skipping...', $timeout, $attachment_id));
+                return true;
+            }
+            return false;
+        };
 
         // Check if already synced
         if (!$force && get_post_meta($attachment_id, 'gcs_synced', true)) {
@@ -274,6 +311,14 @@ class GCS_CLI
             return array(
                 'status' => 'error',
                 'message' => 'File not found: ' . ($file_path ?: 'unknown')
+            );
+        }
+
+        // Check timeout after file validation
+        if ($check_timeout()) {
+            return array(
+                'status' => 'error',
+                'message' => 'Timeout reached during file validation'
             );
         }
 
@@ -299,6 +344,14 @@ class GCS_CLI
             $storage = new Google\Cloud\Storage\StorageClient($config);
             $bucket = $storage->bucket($options['bucket_name']);
             WP_CLI::debug(sprintf('GCS client initialized for attachment %d', $attachment_id));
+
+            // Check timeout after GCS client initialization
+            if ($check_timeout()) {
+                return array(
+                    'status' => 'error',
+                    'message' => 'Timeout reached during GCS client initialization'
+                );
+            }
 
             // Get GCS path
             $folder = isset($options['bucket_folder']) ? $options['bucket_folder'] : '';
@@ -336,6 +389,14 @@ class GCS_CLI
                 WP_CLI::debug(sprintf('Not an image or could not get image size for attachment %d', $attachment_id));
             }
 
+            // Check timeout after image optimization
+            if ($check_timeout()) {
+                return array(
+                    'status' => 'error',
+                    'message' => 'Timeout reached during image optimization'
+                );
+            }
+
             // Upload original file
             WP_CLI::debug(sprintf('Reading file content for attachment %d: %s', $attachment_id, $file_path));
             $content = file_get_contents($file_path);
@@ -353,6 +414,14 @@ class GCS_CLI
             ));
             WP_CLI::debug(sprintf('Successfully uploaded attachment %d to GCS', $attachment_id));
 
+            // Check timeout after main file upload
+            if ($check_timeout()) {
+                return array(
+                    'status' => 'error',
+                    'message' => 'Timeout reached during main file upload'
+                );
+            }
+
             $gcs_url = 'https://storage.googleapis.com/' . $options['bucket_name'] . '/' . $gcs_path;
             $gcs_urls = array('full' => $gcs_url);
 
@@ -365,6 +434,12 @@ class GCS_CLI
                 WP_CLI::debug(sprintf('Found %d thumbnail sizes for attachment %d', count($metadata['sizes']), $attachment_id));
 
                 foreach ($metadata['sizes'] as $size => $size_info) {
+                    // Check timeout before processing each thumbnail
+                    if ($check_timeout()) {
+                        WP_CLI::warning(sprintf('Timeout reached while processing thumbnails for attachment %d', $attachment_id));
+                        break;
+                    }
+
                     $size_file_path = $file_dir . '/' . $size_info['file'];
                     WP_CLI::debug(sprintf('Processing thumbnail size "%s" for attachment %d: %s', $size, $attachment_id, $size_info['file']));
 
@@ -391,6 +466,14 @@ class GCS_CLI
                 }
             } else {
                 WP_CLI::debug(sprintf('No thumbnail sizes found for attachment %d', $attachment_id));
+            }
+
+            // Final timeout check before updating post meta
+            if ($check_timeout()) {
+                return array(
+                    'status' => 'error',
+                    'message' => 'Timeout reached before completing post meta update'
+                );
             }
 
             // Update post meta
