@@ -122,6 +122,11 @@ class GCS_CLI
         $skipped_count = 0;
 
         foreach ($attachment_ids as $index => $attachment_id) {
+            // Debug: Show which file we're about to process
+            $file_path = get_attached_file($attachment_id);
+            $filename = $file_path ? basename($file_path) : 'unknown';
+            WP_CLI::log(sprintf('Processing attachment %d: %s', $attachment_id, $filename));
+            
             $result = self::sync_attachment_to_gcs($attachment_id, $force);
 
             switch ($result['status']) {
@@ -249,8 +254,12 @@ class GCS_CLI
      */
     private static function sync_attachment_to_gcs($attachment_id, $force = false)
     {
+        // Debug: Starting sync process
+        WP_CLI::debug(sprintf('Starting sync for attachment %d (force: %s)', $attachment_id, $force ? 'yes' : 'no'));
+        
         // Check if already synced
         if (!$force && get_post_meta($attachment_id, 'gcs_synced', true)) {
+            WP_CLI::debug(sprintf('Attachment %d already synced, skipping', $attachment_id));
             return array(
                 'status' => 'skipped',
                 'message' => 'Already synced to GCS'
@@ -259,6 +268,8 @@ class GCS_CLI
 
         // Get the attachment file
         $file_path = get_attached_file($attachment_id);
+        WP_CLI::debug(sprintf('File path for attachment %d: %s', $attachment_id, $file_path ?: 'NULL'));
+        
         if (!$file_path || !file_exists($file_path)) {
             return array(
                 'status' => 'error',
@@ -273,6 +284,7 @@ class GCS_CLI
             $rel_path = str_replace($base_dir, '', $file_path);
 
             // Initialize GCS client
+            WP_CLI::debug(sprintf('Initializing GCS client for attachment %d', $attachment_id));
             $config = array();
             if (!empty($options['service_account_json'])) {
                 $json_data = json_decode($options['service_account_json'], true);
@@ -286,6 +298,7 @@ class GCS_CLI
 
             $storage = new Google\Cloud\Storage\StorageClient($config);
             $bucket = $storage->bucket($options['bucket_name']);
+            WP_CLI::debug(sprintf('GCS client initialized for attachment %d', $attachment_id));
 
             // Get GCS path
             $folder = isset($options['bucket_folder']) ? $options['bucket_folder'] : '';
@@ -295,25 +308,36 @@ class GCS_CLI
             $gcs_path = $folder . ltrim($rel_path, '/');
 
             // Optimize image if needed
+            WP_CLI::debug(sprintf('Starting image optimization for attachment %d', $attachment_id));
             $image_quality = isset($options['image_quality']) ? intval($options['image_quality']) : 85;
             $max_width = isset($options['max_width']) ? intval($options['max_width']) : 1982;
 
             $image_size = @getimagesize($file_path);
             if ($image_size) {
+                WP_CLI::debug(sprintf('Image detected for attachment %d: %dx%d', $attachment_id, $image_size[0], $image_size[1]));
                 $image = wp_get_image_editor($file_path);
                 if (!is_wp_error($image)) {
                     $size = $image->get_size();
                     if ($size['width'] > $max_width) {
+                        WP_CLI::debug(sprintf('Resizing image for attachment %d from %d to %d width', $attachment_id, $size['width'], $max_width));
                         $image->resize($max_width, null, false);
                         $image->save($file_path);
+                        WP_CLI::debug(sprintf('Image resized for attachment %d', $attachment_id));
                     } else {
+                        WP_CLI::debug(sprintf('Setting quality to %d for attachment %d', $image_quality, $attachment_id));
                         $image->set_quality($image_quality);
                         $image->save($file_path);
+                        WP_CLI::debug(sprintf('Image quality updated for attachment %d', $attachment_id));
                     }
+                } else {
+                    WP_CLI::debug(sprintf('Could not create image editor for attachment %d: %s', $attachment_id, $image->get_error_message()));
                 }
+            } else {
+                WP_CLI::debug(sprintf('Not an image or could not get image size for attachment %d', $attachment_id));
             }
 
             // Upload original file
+            WP_CLI::debug(sprintf('Reading file content for attachment %d: %s', $attachment_id, $file_path));
             $content = file_get_contents($file_path);
             if ($content === false) {
                 return array(
@@ -322,23 +346,30 @@ class GCS_CLI
                 );
             }
 
+            WP_CLI::debug(sprintf('Uploading attachment %d to GCS path: %s (size: %d bytes)', $attachment_id, $gcs_path, strlen($content)));
             $bucket->upload($content, array(
                 'name' => $gcs_path,
                 'predefinedAcl' => 'publicRead',
             ));
+            WP_CLI::debug(sprintf('Successfully uploaded attachment %d to GCS', $attachment_id));
 
             $gcs_url = 'https://storage.googleapis.com/' . $options['bucket_name'] . '/' . $gcs_path;
             $gcs_urls = array('full' => $gcs_url);
 
             // Upload all sizes
+            WP_CLI::debug(sprintf('Checking for thumbnail sizes for attachment %d', $attachment_id));
             $metadata = wp_get_attachment_metadata($attachment_id);
             if (isset($metadata['sizes']) && is_array($metadata['sizes'])) {
                 $file_dir = dirname($file_path);
                 $rel_dir = dirname($rel_path);
+                WP_CLI::debug(sprintf('Found %d thumbnail sizes for attachment %d', count($metadata['sizes']), $attachment_id));
 
                 foreach ($metadata['sizes'] as $size => $size_info) {
                     $size_file_path = $file_dir . '/' . $size_info['file'];
+                    WP_CLI::debug(sprintf('Processing thumbnail size "%s" for attachment %d: %s', $size, $attachment_id, $size_info['file']));
+                    
                     if (!file_exists($size_file_path)) {
+                        WP_CLI::debug(sprintf('Thumbnail file not found for size "%s", attachment %d: %s', $size, $attachment_id, $size_file_path));
                         continue;
                     }
 
@@ -347,19 +378,27 @@ class GCS_CLI
                     $size_content = file_get_contents($size_file_path);
 
                     if ($size_content !== false) {
+                        WP_CLI::debug(sprintf('Uploading thumbnail size "%s" for attachment %d to: %s', $size, $attachment_id, $size_gcs_path));
                         $bucket->upload($size_content, array(
                             'name' => $size_gcs_path,
                             'predefinedAcl' => 'publicRead',
                         ));
                         $gcs_urls[$size] = 'https://storage.googleapis.com/' . $options['bucket_name'] . '/' . $size_gcs_path;
+                        WP_CLI::debug(sprintf('Successfully uploaded thumbnail size "%s" for attachment %d', $size, $attachment_id));
+                    } else {
+                        WP_CLI::debug(sprintf('Failed to read thumbnail content for size "%s", attachment %d', $size, $attachment_id));
                     }
                 }
+            } else {
+                WP_CLI::debug(sprintf('No thumbnail sizes found for attachment %d', $attachment_id));
             }
 
             // Update post meta
+            WP_CLI::debug(sprintf('Updating post meta for attachment %d', $attachment_id));
             update_post_meta($attachment_id, 'gcs_url', $gcs_url);
             update_post_meta($attachment_id, 'gcs_urls', $gcs_urls);
             update_post_meta($attachment_id, 'gcs_synced', true);
+            WP_CLI::debug(sprintf('Successfully completed sync for attachment %d', $attachment_id));
 
             // Delete local files if auto-delete is enabled
             if (!empty($options['auto_delete_local'])) {
