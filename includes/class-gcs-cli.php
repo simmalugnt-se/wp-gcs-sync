@@ -126,7 +126,7 @@ class GCS_CLI
             $file_path = get_attached_file($attachment_id);
             $filename = $file_path ? basename($file_path) : 'unknown';
             WP_CLI::log(sprintf('Processing attachment %d: %s', $attachment_id, $filename));
-            
+
             $result = self::sync_attachment_to_gcs($attachment_id, $force);
 
             switch ($result['status']) {
@@ -256,7 +256,7 @@ class GCS_CLI
     {
         // Debug: Starting sync process
         WP_CLI::debug(sprintf('Starting sync for attachment %d (force: %s)', $attachment_id, $force ? 'yes' : 'no'));
-        
+
         // Check if already synced
         if (!$force && get_post_meta($attachment_id, 'gcs_synced', true)) {
             WP_CLI::debug(sprintf('Attachment %d already synced, skipping', $attachment_id));
@@ -269,7 +269,7 @@ class GCS_CLI
         // Get the attachment file
         $file_path = get_attached_file($attachment_id);
         WP_CLI::debug(sprintf('File path for attachment %d: %s', $attachment_id, $file_path ?: 'NULL'));
-        
+
         if (!$file_path || !file_exists($file_path)) {
             return array(
                 'status' => 'error',
@@ -367,7 +367,7 @@ class GCS_CLI
                 foreach ($metadata['sizes'] as $size => $size_info) {
                     $size_file_path = $file_dir . '/' . $size_info['file'];
                     WP_CLI::debug(sprintf('Processing thumbnail size "%s" for attachment %d: %s', $size, $attachment_id, $size_info['file']));
-                    
+
                     if (!file_exists($size_file_path)) {
                         WP_CLI::debug(sprintf('Thumbnail file not found for size "%s", attachment %d: %s', $size, $attachment_id, $size_file_path));
                         continue;
