@@ -86,8 +86,11 @@ class GCS_Helper
         if (!self::$is_enabled) {
             return $url;
         }
+
+        // Only modify URLs for images that have background_removed meta and are synced
+        $background_removed = get_post_meta($attachment_id, 'background_removed', true);
         $is_synced = get_post_meta($attachment_id, 'gcs_synced', true);
-        if (!$is_synced) {
+        if (!$background_removed || !$is_synced) {
             return $url;
         }
 
@@ -134,6 +137,13 @@ class GCS_Helper
         if (!self::$is_enabled || !is_array($image)) {
             return $image;
         }
+
+        // Only modify URLs for images that have background_removed meta
+        $background_removed = get_post_meta($attachment_id, 'background_removed', true);
+        if (!$background_removed) {
+            return $image;
+        }
+
         $image[0] = self::modify_attachment_url($image[0], $attachment_id);
         return $image;
     }
@@ -143,6 +153,13 @@ class GCS_Helper
         if (!self::$is_enabled || empty($sources)) {
             return $sources;
         }
+
+        // Only modify URLs for images that have background_removed meta
+        $background_removed = get_post_meta($attachment_id, 'background_removed', true);
+        if (!$background_removed) {
+            return $sources;
+        }
+
         foreach ($sources as &$source) {
             $source['url'] = self::modify_attachment_url($source['url'], $attachment_id);
         }
@@ -158,7 +175,11 @@ class GCS_Helper
         // Upload original and sizes after WordPress generates sizes (handled by attachment metadata filter)
         add_filter('wp_generate_attachment_metadata', function ($metadata, $attachment_id) use ($upload) {
             try {
-                self::upload_attachment_and_sizes_to_gcs($attachment_id, $upload['file']);
+                // Only sync images that have the background_removed meta
+                $background_removed = get_post_meta($attachment_id, 'background_removed', true);
+                if ($background_removed) {
+                    self::upload_attachment_and_sizes_to_gcs($attachment_id, $upload['file']);
+                }
             } catch (Exception $e) {
                 error_log('GCS Media Sync: Upload error: ' . $e->getMessage());
             }
