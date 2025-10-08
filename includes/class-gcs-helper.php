@@ -87,10 +87,9 @@ class GCS_Helper
             return $url;
         }
 
-        // Only modify URLs for images that have background_removed meta and are synced
-        $background_removed = get_post_meta($attachment_id, 'background_removed', true);
+        // Only modify URLs for images that are synced to GCS
         $is_synced = get_post_meta($attachment_id, 'gcs_synced', true);
-        if (!$background_removed || !$is_synced) {
+        if (!$is_synced) {
             return $url;
         }
 
@@ -138,9 +137,9 @@ class GCS_Helper
             return $image;
         }
 
-        // Only modify URLs for images that have background_removed meta
-        $background_removed = get_post_meta($attachment_id, 'background_removed', true);
-        if (!$background_removed) {
+        // Only modify URLs for images that are synced to GCS
+        $is_synced = get_post_meta($attachment_id, 'gcs_synced', true);
+        if (!$is_synced) {
             return $image;
         }
 
@@ -154,9 +153,9 @@ class GCS_Helper
             return $sources;
         }
 
-        // Only modify URLs for images that have background_removed meta
-        $background_removed = get_post_meta($attachment_id, 'background_removed', true);
-        if (!$background_removed) {
+        // Only modify URLs for images that are synced to GCS
+        $is_synced = get_post_meta($attachment_id, 'gcs_synced', true);
+        if (!$is_synced) {
             return $sources;
         }
 
@@ -490,7 +489,6 @@ class GCS_Helper
             update_post_meta($attachment_id, 'gcs_url', $gcs_url);
             update_post_meta($attachment_id, 'gcs_urls', $gcs_urls);
             update_post_meta($attachment_id, 'gcs_synced', true);
-            update_post_meta($attachment_id, 'background_removed', true);
 
             self::close_storage_client();
 
