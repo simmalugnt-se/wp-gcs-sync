@@ -408,4 +408,107 @@ class GCS_Helper
             self::close_storage_client();
         }
     }
+
+    /**
+     * Check if attachment files exist on GCS and update metadata accordingly
+     *
+     * @param int $attachment_id The attachment ID
+     * @return array Array with 'success' boolean and 'message' string
+     */
+    public static function check_and_update_gcs_status($attachment_id)
+    {
+        // Initialize the settings first
+        $options = get_option('gcs_sync_options', array());
+        self::$bucket_name = isset($options['bucket_name']) ? $options['bucket_name'] : '';
+        self::$bucket_folder = isset($options['bucket_folder']) ? $options['bucket_folder'] : '';
+        self::$service_account_json = isset($options['service_account_json']) ? $options['service_account_json'] : '';
+
+        if (empty(self::$bucket_name)) {
+            return array(
+                'success' => false,
+                'message' => 'GCS bucket is not configured.'
+            );
+        }
+
+        if (!class_exists('Google\\Cloud\\Storage\\StorageClient')) {
+            return array(
+                'success' => false,
+                'message' => 'Google Cloud Storage PHP library not available.'
+            );
+        }
+
+        try {
+            $file = get_attached_file($attachment_id);
+            if (!$file) {
+                return array(
+                    'success' => false,
+                    'message' => 'Attachment file not found.'
+                );
+            }
+
+            $upload_dir = wp_upload_dir();
+            $base_dir = trailingslashit($upload_dir['basedir']);
+            $rel_path = str_replace($base_dir, '', $file);
+
+            $storage = self::get_storage_client();
+            $bucket = $storage->bucket(self::$bucket_name);
+
+            // Check if original file exists on GCS
+            $gcs_path = self::get_gcs_path($rel_path);
+            $object = $bucket->object($gcs_path);
+
+            if (!$object->exists()) {
+                self::close_storage_client();
+                return array(
+                    'success' => false,
+                    'message' => 'File does not exist on GCS at path: ' . $gcs_path
+                );
+            }
+
+            // File exists, build the URL and check for sizes
+            $gcs_url = 'https://storage.googleapis.com/' . self::$bucket_name . '/' . $gcs_path;
+            $gcs_urls = array('full' => $gcs_url);
+
+            $metadata = wp_get_attachment_metadata($attachment_id);
+            $found_sizes = array();
+
+            if (isset($metadata['sizes']) && is_array($metadata['sizes'])) {
+                $dir = dirname($rel_path);
+                foreach ($metadata['sizes'] as $size => $size_info) {
+                    $size_path = $dir . '/' . $size_info['file'];
+                    $size_gcs_path = self::get_gcs_path($size_path);
+                    $size_object = $bucket->object($size_gcs_path);
+
+                    if ($size_object->exists()) {
+                        $gcs_urls[$size] = 'https://storage.googleapis.com/' . self::$bucket_name . '/' . $size_gcs_path;
+                        $found_sizes[] = $size;
+                    }
+                }
+            }
+
+            // Update post meta (same as if the file was synced during upload)
+            update_post_meta($attachment_id, 'gcs_url', $gcs_url);
+            update_post_meta($attachment_id, 'gcs_urls', $gcs_urls);
+            update_post_meta($attachment_id, 'gcs_synced', true);
+            update_post_meta($attachment_id, 'background_removed', true);
+
+            self::close_storage_client();
+
+            $size_info = !empty($found_sizes)
+                ? ' (including ' . count($found_sizes) . ' sizes: ' . implode(', ', $found_sizes) . ')'
+                : ' (no thumbnail sizes found)';
+
+            return array(
+                'success' => true,
+                'message' => 'File found on GCS and metadata updated successfully!' . $size_info,
+                'gcs_url' => $gcs_url
+            );
+        } catch (Exception $e) {
+            self::close_storage_client();
+            return array(
+                'success' => false,
+                'message' => 'Error checking GCS: ' . $e->getMessage()
+            );
+        }
+    }
 }

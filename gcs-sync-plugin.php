@@ -1,4 +1,5 @@
 <?php
+
 /**
  * Plugin Name: GCS Media Sync
  * Plugin URI: https://github.com/your-username/gcs-media-sync
@@ -33,80 +34,87 @@ if (file_exists(GCS_SYNC_PLUGIN_DIR . 'vendor/autoload.php')) {
 /**
  * Main plugin class
  */
-class GCS_Sync_Plugin {
-    
+class GCS_Sync_Plugin
+{
+
     /**
      * Instance of this class
      */
     private static $instance = null;
-    
+
     /**
      * Get singleton instance
      */
-    public static function instance() {
+    public static function instance()
+    {
         if (null === self::$instance) {
             self::$instance = new self();
         }
         return self::$instance;
     }
-    
+
     /**
      * Constructor
      */
-    private function __construct() {
+    private function __construct()
+    {
         $this->init();
     }
-    
+
     /**
      * Initialize the plugin
      */
-    private function init() {
+    private function init()
+    {
         // Load required files
         $this->load_dependencies();
-        
+
         // Initialize hooks
         add_action('init', array($this, 'init_hooks'));
-        
+
         // Admin hooks
         if (is_admin()) {
             add_action('admin_menu', array($this, 'admin_menu'));
             add_action('admin_init', array($this, 'admin_init'));
             add_action('admin_notices', array($this, 'admin_notices'));
         }
-        
+
         // Activation and deactivation hooks
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
     }
-    
+
     /**
      * Load plugin dependencies
      */
-    private function load_dependencies() {
+    private function load_dependencies()
+    {
         require_once GCS_SYNC_PLUGIN_DIR . 'includes/class-gcs-helper.php';
         require_once GCS_SYNC_PLUGIN_DIR . 'includes/class-gcs-admin.php';
         require_once GCS_SYNC_PLUGIN_DIR . 'includes/class-gcs-cli.php';
     }
-    
+
     /**
      * Initialize hooks
      */
-    public function init_hooks() {
+    public function init_hooks()
+    {
         // Initialize GCS functionality if enabled and configured
         if ($this->is_gcs_enabled() && $this->is_gcs_configured()) {
             GCS_Helper::init();
         }
-        
+
         // Register WP-CLI commands
         if (defined('WP_CLI') && WP_CLI) {
             GCS_CLI::register();
         }
     }
-    
+
     /**
      * Admin menu
      */
-    public function admin_menu() {
+    public function admin_menu()
+    {
         add_options_page(
             __('GCS Media Sync', 'gcs-sync'),
             __('GCS Media Sync', 'gcs-sync'),
@@ -114,7 +122,7 @@ class GCS_Sync_Plugin {
             'gcs-sync',
             array('GCS_Admin', 'settings_page')
         );
-        
+
         // Add tools submenu for diagnostics
         add_submenu_page(
             'tools.php',
@@ -125,21 +133,32 @@ class GCS_Sync_Plugin {
             array('GCS_Admin', 'check_page')
         );
     }
-    
+
     /**
      * Admin init
      */
-    public function admin_init() {
+    public function admin_init()
+    {
         // Register settings
         register_setting('gcs_sync_settings', 'gcs_sync_options', array(
             'sanitize_callback' => array('GCS_Admin', 'sanitize_settings'),
         ));
+
+        // Add attachment fields for GCS status and check button
+        add_filter('attachment_fields_to_edit', array('GCS_Admin', 'add_attachment_fields'), 10, 2);
+
+        // Enqueue scripts for attachment pages
+        add_action('admin_enqueue_scripts', array('GCS_Admin', 'enqueue_attachment_scripts'));
+
+        // Register AJAX handler for checking existing files on GCS
+        add_action('wp_ajax_gcs_check_existing_file', array('GCS_Admin', 'ajax_check_existing_file'));
     }
-    
+
     /**
      * Admin notices
      */
-    public function admin_notices() {
+    public function admin_notices()
+    {
         // Check if Google Cloud Storage library is available
         if (!class_exists('Google\Cloud\Storage\StorageClient')) {
             echo '<div class="notice notice-error"><p>';
@@ -152,7 +171,7 @@ class GCS_Sync_Plugin {
             }
             echo '</p></div>';
         }
-        
+
         // Check if plugin is enabled but not configured
         if ($this->is_gcs_enabled() && !$this->is_gcs_configured()) {
             $settings_url = admin_url('options-general.php?page=gcs-sync');
@@ -161,11 +180,12 @@ class GCS_Sync_Plugin {
             echo '</p></div>';
         }
     }
-    
+
     /**
      * Plugin activation
      */
-    public function activate() {
+    public function activate()
+    {
         // Create default options
         $default_options = array(
             'enabled' => false,
@@ -176,33 +196,36 @@ class GCS_Sync_Plugin {
             'image_quality' => 85,
             'max_width' => 1920,
         );
-        
+
         add_option('gcs_sync_options', $default_options);
-        
+
         // Set activation flag for notices
         set_transient('gcs_sync_activated', true, 30);
     }
-    
+
     /**
      * Plugin deactivation
      */
-    public function deactivate() {
+    public function deactivate()
+    {
         // Clean up transients
         delete_transient('gcs_sync_activated');
     }
-    
+
     /**
      * Check if GCS is enabled
      */
-    private function is_gcs_enabled() {
+    private function is_gcs_enabled()
+    {
         $options = get_option('gcs_sync_options', array());
         return !empty($options['enabled']);
     }
-    
+
     /**
      * Check if GCS is configured
      */
-    private function is_gcs_configured() {
+    private function is_gcs_configured()
+    {
         $options = get_option('gcs_sync_options', array());
         return !empty($options['bucket_name']);
     }
@@ -211,7 +234,8 @@ class GCS_Sync_Plugin {
 /**
  * Initialize the plugin
  */
-function gcs_sync_init() {
+function gcs_sync_init()
+{
     return GCS_Sync_Plugin::instance();
 }
 

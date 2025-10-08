@@ -131,6 +131,150 @@ Service Account: <?php echo !empty($options['service_account_json']) ? '✅ conf
 Plugin path: <?php echo esc_html(GCS_SYNC_PLUGIN_DIR); ?>
             </pre>
         </div>
+    <?php
+    }
+
+    /**
+     * Add GCS check button to attachment edit page
+     */
+    public static function add_attachment_fields($form_fields, $post)
+    {
+        $is_synced = get_post_meta($post->ID, 'gcs_synced', true);
+        $gcs_url = get_post_meta($post->ID, 'gcs_url', true);
+
+        $status_text = $is_synced ? 'Yes' : 'No';
+        $status_color = $is_synced ? '#46b450' : '#dc3232';
+
+        $html = '<div style="margin: 10px 0;">';
+        $html .= '<p><strong>GCS Status:</strong> <span style="color: ' . $status_color . ';">' . esc_html($status_text) . '</span></p>';
+
+        if ($is_synced && $gcs_url) {
+            $html .= '<p><strong>GCS URL:</strong><br><a href="' . esc_url($gcs_url) . '" target="_blank" style="word-break: break-all; font-size: 12px;">' . esc_html($gcs_url) . '</a></p>';
+        }
+
+        $html .= '<p>';
+        $html .= '<button type="button" class="button button-secondary" id="gcs-check-existing" data-attachment-id="' . esc_attr($post->ID) . '">';
+        $html .= 'Check if File Exists on GCS';
+        $html .= '</button>';
+        $html .= '<span id="gcs-check-status" style="margin-left: 10px;"></span>';
+        $html .= '</p>';
+        $html .= '</div>';
+
+        $form_fields['gcs_sync'] = array(
+            'label' => 'GCS Sync',
+            'input' => 'html',
+            'html' => $html,
+        );
+
+        return $form_fields;
+    }
+
+    /**
+     * Enqueue admin scripts for attachment page
+     */
+    public static function enqueue_attachment_scripts($hook)
+    {
+        // Only load on post edit page or media upload page
+        if (!in_array($hook, array('post.php', 'upload.php', 'media.php'))) {
+            return;
+        }
+
+        // Inline script since it's small
+        add_action('admin_footer', array(__CLASS__, 'output_attachment_script'));
+    }
+
+    /**
+     * Output inline JavaScript for GCS check button
+     */
+    public static function output_attachment_script()
+    {
+    ?>
+        <script type="text/javascript">
+            jQuery(document).ready(function($) {
+                // Handle GCS check button click
+                $(document).on('click', '#gcs-check-existing', function(e) {
+                    e.preventDefault();
+
+                    var button = $(this);
+                    var attachmentId = button.data('attachment-id');
+                    var statusSpan = $('#gcs-check-status');
+
+                    // Disable button and show loading
+                    button.prop('disabled', true);
+                    statusSpan.html('<span style="color: #0073aa;">Checking GCS...</span>');
+
+                    // Make AJAX request
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'gcs_check_existing_file',
+                            attachment_id: attachmentId,
+                            nonce: '<?php echo wp_create_nonce('gcs_check_existing'); ?>'
+                        },
+                        success: function(response) {
+                            button.prop('disabled', false);
+
+                            if (response.success) {
+                                statusSpan.html('<span style="color: #46b450;">✓ ' + response.data.message + '</span>');
+
+                                // Refresh the page after 2 seconds to show updated status
+                                setTimeout(function() {
+                                    location.reload();
+                                }, 2000);
+                            } else {
+                                statusSpan.html('<span style="color: #dc3232;">✗ ' + response.data.message + '</span>');
+                            }
+                        },
+                        error: function(xhr, status, error) {
+                            button.prop('disabled', false);
+                            statusSpan.html('<span style="color: #dc3232;">Error: ' + error + '</span>');
+                        }
+                    });
+                });
+            });
+        </script>
 <?php
+    }
+
+    /**
+     * AJAX handler to check if file exists on GCS
+     */
+    public static function ajax_check_existing_file()
+    {
+        // Verify nonce
+        if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'gcs_check_existing')) {
+            wp_send_json_error(array('message' => 'Invalid security token.'));
+            return;
+        }
+
+        // Check user permissions
+        if (!current_user_can('upload_files')) {
+            wp_send_json_error(array('message' => 'You do not have permission to perform this action.'));
+            return;
+        }
+
+        // Get attachment ID
+        $attachment_id = isset($_POST['attachment_id']) ? intval($_POST['attachment_id']) : 0;
+
+        if (!$attachment_id) {
+            wp_send_json_error(array('message' => 'Invalid attachment ID.'));
+            return;
+        }
+
+        // Check if attachment exists
+        if (get_post_type($attachment_id) !== 'attachment') {
+            wp_send_json_error(array('message' => 'Attachment not found.'));
+            return;
+        }
+
+        // Call the helper function to check GCS and update meta
+        $result = GCS_Helper::check_and_update_gcs_status($attachment_id);
+
+        if ($result['success']) {
+            wp_send_json_success($result);
+        } else {
+            wp_send_json_error($result);
+        }
     }
 }
